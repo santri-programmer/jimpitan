@@ -29,7 +29,7 @@ let donaturTerinput = {
 };
 
 // Backend upload URL (ubah sesuai kebutuhan)
-const UPLOADURL = "http://localhost:8080/upload";
+const UPLOADURL = "https://api.pnakote.my.id/upload";
 
 let cachedElements = {};
 let uploadController = null;
