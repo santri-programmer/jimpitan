@@ -1,6 +1,6 @@
 const CACHE_NAME = "jimpitan-cache-v1";
 const ASSETS = [
-  "/",
+  "./",
   "/index.html",
   "/style.css",
   "/script.js",
