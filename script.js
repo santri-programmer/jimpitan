@@ -230,13 +230,14 @@ async function preloadAllKategori() {
 
 // ======= EVENT LISTENERS =======
 function setupEventListeners() {
+  // quick amount clicks (delegated)
   document.addEventListener("click", (e) => {
     const target = e.target.closest && e.target.closest(".quick-amount");
     if (target) {
       const amount = target.getAttribute("data-amount") || "0";
       if (cachedElements.pemasukan) {
         cachedElements.pemasukan.value = amount;
-        cachedElements.pemasukan.focus();
+        // cachedElements.pemasukan.focus(); // Dihapus untuk mobile
       }
     }
   });
@@ -274,6 +275,32 @@ function setupEventListeners() {
   if (cachedElements.btnRefresh) {
     cachedElements.btnRefresh.addEventListener("click", () => {
       window.location.reload();
+    });
+  }
+
+  // ===== event delegation for table actions (edit / delete / save / cancel)
+  // ensure we have tbody
+  const tbody = cachedElements.tabelDonasi?.querySelector("tbody");
+  if (tbody) {
+    tbody.addEventListener("click", async (e) => {
+      const btn = e.target.closest("button[data-action]");
+      if (!btn) return;
+
+      const action = btn.dataset.action;
+      const kategori = btn.dataset.kategori;
+      const id = btn.dataset.id ? Number(btn.dataset.id) : null;
+      const donatur = btn.dataset.donatur; // original string
+
+      if (action === "edit") {
+        handleEdit(btn, kategori, donatur, id);
+      } else if (action === "delete") {
+        await handleDelete(kategori, donatur, id);
+      } else if (action === "save") {
+        await handleSave(btn, kategori, donatur, id);
+      } else if (action === "cancel") {
+        // reload the table for that kategori (cancel editing)
+        await loadDataHariIni(kategori);
+      }
     });
   }
 }
@@ -357,7 +384,7 @@ async function tambahData() {
     await muatDropdown(kategori);
 
     cachedElements.pemasukan.value = "";
-    cachedElements.pemasukan.focus();
+    // cachedElements.pemasukan.focus(); // Dihapus untuk mobile
   } catch (e) {
     logger.error("❌ tambahData error:", e);
     showNotification("Gagal menyimpan data", false);
@@ -380,6 +407,100 @@ async function exportData() {
   } catch (error) {
     logger.error("❌ PDF generation error:", error);
     showNotification("Gagal membuat PDF", false);
+  }
+}
+
+// ======= HANDLERS FOR EDIT/DELETE/SAVE (delegated) =======
+function handleEdit(btn, kategori, donatur, id) {
+  // ambil row
+  const tr = btn.closest("tr");
+  if (!tr) return;
+  const nominalCell = tr.children[1];
+  const aksiCell = tr.children[2];
+
+  // ambil nominal dari cache
+  const cachedData = dataCache[kategori].get(donatur);
+  const current = cachedData ? cachedData.nominal : "0";
+
+  // buat input dan tombol save/cancel
+  const input = document.createElement("input");
+  input.type = "number";
+  input.id = `editInput-${id}`;
+  input.value = current;
+  input.className = "border p-1 w-24 text-right";
+
+  // clear nominal cell and append input
+  nominalCell.textContent = "";
+  nominalCell.appendChild(input);
+
+  // create save button
+  const saveBtn = document.createElement("button");
+  saveBtn.className = "bg-emerald-500 text-white p-2 rounded-lg mx-1";
+  saveBtn.dataset.action = "save";
+  saveBtn.dataset.kategori = kategori;
+  saveBtn.dataset.donatur = donatur;
+  saveBtn.dataset.id = String(id);
+  saveBtn.innerHTML = `<i class="fas fa-check"></i>`;
+
+  // create cancel button
+  const cancelBtn = document.createElement("button");
+  cancelBtn.className = "bg-gray-500 text-white p-2 rounded-lg mx-1";
+  cancelBtn.dataset.action = "cancel";
+  cancelBtn.dataset.kategori = kategori;
+  cancelBtn.innerHTML = `<i class="fas fa-times"></i>`;
+
+  // replace aksiCell content
+  aksiCell.textContent = "";
+  aksiCell.appendChild(saveBtn);
+  aksiCell.appendChild(cancelBtn);
+
+  // focus input
+  input.focus();
+}
+
+async function handleSave(btn, kategori, donatur, id) {
+  const inputEl = document.getElementById(`editInput-${id}`);
+  if (!inputEl) return;
+  const nominalBaru = inputEl.value;
+  const tanggal = new Date().toLocaleDateString("id-ID");
+
+  try {
+    await db.updateDailyInput(id, { nominal: nominalBaru, tanggal });
+
+    // update cache
+    const cached = dataCache[kategori].get(donatur);
+    if (cached) cached.nominal = nominalBaru;
+
+    dataDonasi = Array.from(dataCache[kategori].values());
+    renderTabelTerurut(kategori);
+    updateTotalDisplay();
+    showNotification(`✅ Data ${donatur} diperbarui`, true);
+  } catch (error) {
+    logger.error("❌ handleSave error:", error);
+    showNotification("Gagal memperbarui data", false);
+  }
+}
+
+async function handleDelete(kategori, donatur, id) {
+  const originalDonatur = donatur;
+  if (!confirm(`Hapus data ${originalDonatur}?`)) return;
+
+  try {
+    await db.deleteDailyInput(id);
+
+    // hapus dari cache
+    dataCache[kategori].delete(originalDonatur);
+    donaturTerinput[kategori].delete(originalDonatur);
+
+    dataDonasi = Array.from(dataCache[kategori].values());
+    renderTabelTerurut(kategori);
+    updateTotalDisplay();
+    updateDataCount();
+    await muatDropdown(kategori);
+    showNotification(`🗑️ Data ${originalDonatur} dihapus`, true);
+  } catch (error) {
+    logger.error("❌ handleDelete error:", error);
+    showNotification("Gagal menghapus data", false);
   }
 }
 
@@ -591,7 +712,9 @@ function getSortedDataDonasi(kategori) {
 }
 
 function renderTabelTerurut(kategori) {
-  const tbody = cachedElements.tabelDonasi.querySelector("tbody");
+  const tabel = cachedElements.tabelDonasi;
+  if (!tabel) return;
+  const tbody = tabel.querySelector("tbody");
   const sorted = getSortedDataDonasi(kategori);
 
   tbody.innerHTML = "";
@@ -605,26 +728,63 @@ function renderTabelTerurut(kategori) {
   const frag = document.createDocumentFragment();
   for (const item of sorted) {
     const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td class="py-3 px-4">${item.donatur}</td>
-      <td class="py-3 px-4 text-right font-mono">${
-        parseInt(item.nominal) === 0
-          ? "<span class='text-gray-400 italic'>Tidak Mengisi</span>"
-          : "Rp " + Number(item.nominal).toLocaleString("id-ID")
-      }</td>
-      <td class="py-3 px-4 text-center">
-        <button class="bg-amber-500 text-white p-2 rounded-lg mx-1" onclick="editRow(this,'${kategori}','${
-      item.donatur
-    }',${item.id})"><i class="fas fa-edit"></i></button>
-        <button class="bg-red-500 text-white p-2 rounded-lg mx-1" onclick="hapusRow('${kategori}','${
-      item.donatur
-    }',${item.id})"><i class="fas fa-trash"></i></button>
-      </td>`;
+
+    // Nama donatur cell (textContent to avoid HTML injection)
+    const tdName = document.createElement("td");
+    tdName.className = "py-3 px-4";
+    tdName.textContent = item.donatur;
+
+    // Nominal cell
+    const tdNominal = document.createElement("td");
+    tdNominal.className = "py-3 px-4 text-right font-mono";
+    if (parseInt(item.nominal) === 0) {
+      const span = document.createElement("span");
+      span.className = "text-gray-400 italic";
+      span.textContent = "Tidak Mengisi";
+      tdNominal.appendChild(span);
+    } else {
+      tdNominal.textContent =
+        "Rp " + Number(item.nominal).toLocaleString("id-ID");
+    }
+
+    // Aksi cell (buttons)
+    const tdAksi = document.createElement("td");
+    tdAksi.className = "py-3 px-4 text-center";
+
+    // Edit button
+    const editBtn = document.createElement("button");
+    editBtn.className = "bg-amber-500 text-white p-2 rounded-lg mx-1";
+    editBtn.dataset.action = "edit";
+    editBtn.dataset.kategori = kategori;
+    editBtn.dataset.donatur = item.donatur;
+    editBtn.dataset.id = String(item.id);
+    editBtn.setAttribute("aria-label", `Edit ${item.donatur}`);
+    editBtn.innerHTML = `<i class="fas fa-edit"></i>`;
+
+    // Delete button
+    const delBtn = document.createElement("button");
+    delBtn.className = "bg-red-500 text-white p-2 rounded-lg mx-1";
+    delBtn.dataset.action = "delete";
+    delBtn.dataset.kategori = kategori;
+    delBtn.dataset.donatur = item.donatur;
+    delBtn.dataset.id = String(item.id);
+    delBtn.setAttribute("aria-label", `Hapus ${item.donatur}`);
+    delBtn.innerHTML = `<i class="fas fa-trash"></i>`;
+
+    tdAksi.appendChild(editBtn);
+    tdAksi.appendChild(delBtn);
+
+    tr.appendChild(tdName);
+    tr.appendChild(tdNominal);
+    tr.appendChild(tdAksi);
+
     frag.appendChild(tr);
   }
+
   tbody.appendChild(frag);
 }
 
+// ======= UTILITY / CSV / DOWNLOAD =======
 function updateTotalDisplay() {
   const total = dataDonasi.reduce((s, it) => s + Number(it.nominal), 0);
   cachedElements.totalDonasi.textContent =
@@ -662,39 +822,22 @@ function downloadCSV(csvContent, kategori) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-async function editRow(btn, kategori, donatur, id) {
-  const tr = btn.closest("tr");
-  const nominalCell = tr.children[1];
-  const aksiCell = tr.children[2];
-  const current = nominalCell.textContent.replace(/[Rp\s.]/g, "") || "0";
-  nominalCell.innerHTML = `<input type="number" id="editInput" value="${current}" class="border p-1 w-24 text-right">`;
-  aksiCell.innerHTML = `
-    <button class="bg-emerald-500 text-white p-2 rounded-lg mx-1" onclick="simpanEdit('${kategori}','${donatur}',${id})"><i class="fas fa-check"></i></button>
-    <button class="bg-gray-500 text-white p-2 rounded-lg mx-1" onclick="loadDataHariIni('${kategori}')"><i class="fas fa-times"></i></button>`;
-  document.getElementById("editInput").focus();
-}
+// NOTE: old escape/unescape are removed because we no longer build inline JS strings.
+// If you need them for other parts, implement proper encoding (e.g. encodeURIComponent).
 
-async function simpanEdit(kategori, donatur, id) {
-  const nominalBaru = document.getElementById("editInput").value;
-  const tanggal = new Date().toLocaleDateString("id-ID");
-  await db.updateDailyInput(id, { nominal: nominalBaru, tanggal });
-  const cached = dataCache[kategori].get(donatur);
-  if (cached) cached.nominal = nominalBaru;
-  dataDonasi = Array.from(dataCache[kategori].values());
-  renderTabelTerurut(kategori);
-  updateTotalDisplay();
-  showNotification(`✅ Data ${donatur} diperbarui`, true);
-}
+// ======= Backwards-compatible globals (optional) =======
+// Keep function names as aliases so external callers still work
+window.editRow = function (btn, kategori, donatur, id) {
+  // In case something still calls inline, try to find the button in DOM closest to btn
+  // but prefer using delegation. Here we just call handler directly:
+  handleEdit(btn, kategori, donatur, id);
+};
+window.hapusRow = function (kategori, donatur, id) {
+  handleDelete(kategori, donatur, id);
+};
+window.simpanEdit = function (kategori, donatur, id) {
+  // find a button to pass to handleSave - but direct call works too
+  handleSave(null, kategori, donatur, id);
+};
 
-async function hapusRow(kategori, donatur, id) {
-  if (!confirm(`Hapus data ${donatur}?`)) return;
-  await db.deleteDailyInput(id);
-  dataCache[kategori].delete(donatur);
-  dataDonasi = Array.from(dataCache[kategori].values());
-  donaturTerinput[kategori].delete(donatur); // ⭐ BARIS INI YANG DITAMBAHKAN
-  renderTabelTerurut(kategori);
-  updateTotalDisplay();
-  updateDataCount();
-  await muatDropdown(kategori);
-  showNotification(`🗑️ Data ${donatur} dihapus`, true);
-}
+// ======= END OF FILE =======
