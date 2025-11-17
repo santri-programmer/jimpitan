@@ -288,7 +288,7 @@
             const pemasukanInput = document.getElementById("pemasukan");
             if (pemasukanInput) {
               pemasukanInput.value = amount;
-              pemasukanInput.focus();
+              // Tidak ada pemasukanInput.focus() di sini untuk mobile
             }
           }
         });
@@ -301,6 +301,44 @@
             window.location.reload();
           });
         }
+
+        // Nonaktifkan fokus otomatis pada input nominal di mobile
+        const disableMobileFocus = () => {
+          const pemasukanInput = document.getElementById("pemasukan");
+          if (!pemasukanInput) return;
+
+          // Deteksi perangkat mobile
+          const isMobile =
+            /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+              navigator.userAgent
+            );
+
+          if (isMobile) {
+            // Tambahkan atribut readonly untuk mencegah keyboard muncul otomatis
+            pemasukanInput.setAttribute("readonly", "readonly");
+
+            // Hapus readonly ketika user menyentuh input (agar bisa input manual)
+            pemasukanInput.addEventListener("touchstart", function () {
+              pemasukanInput.removeAttribute("readonly");
+              // Fokus manual setelah user menyentuh
+              setTimeout(() => {
+                pemasukanInput.focus();
+              }, 100);
+            });
+
+            // Kembalikan ke readonly setelah selesai input
+            pemasukanInput.addEventListener("blur", function () {
+              setTimeout(() => {
+                pemasukanInput.setAttribute("readonly", "readonly");
+              }, 500);
+            });
+
+            console.log("📱 Mobile mode: Input focus behavior adjusted");
+          }
+        };
+
+        // Panggil fungsi disable mobile focus
+        setTimeout(disableMobileFocus, 500);
 
         // Show critical elements dengan animation
         setTimeout(() => {
@@ -388,6 +426,25 @@
         console.log("🎉 PWA installed successfully");
         deferredPrompt = null;
       });
+
+      // MODIFIKASI: Fungsi hapusRow yang diperbaiki agar donatur kembali ke dropdown
+      async function hapusRow(kategori, donatur, id) {
+        if (!confirm(`Hapus data ${donatur}?`)) return;
+        try {
+          await db.deleteDailyInput(id);
+          dataCache[kategori].delete(donatur);
+          dataDonasi = Array.from(dataCache[kategori].values());
+          donaturTerinput[kategori].delete(donatur); // ⭐ BARIS PENTING: hapus dari Set
+          renderTabelTerurut(kategori);
+          updateTotalDisplay();
+          updateDataCount();
+          await muatDropdown(kategori);
+          showNotification(`🗑️ Data ${donatur} dihapus`, true);
+        } catch (error) {
+          console.error("❌ hapusRow error:", error);
+          showNotification("Gagal menghapus data", false);
+        }
+      }
 
       // Performance monitoring (optional debug features)
       if (
